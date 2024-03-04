@@ -13,7 +13,7 @@ RUN go build -v -o /usr/src/app/goBotter
 FROM alpine:3
 RUN apk add --no-cache ca-certificates
 
-WORKDIR /the/workdir/path
+WORKDIR /opt
 COPY --from=builder /usr/src/app/goBotter /opt/goBotter
 
 CMD [ "/opt/goBotter" ]
