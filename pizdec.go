@@ -31,7 +31,7 @@ var currencies = map[string]map[string]string{
 	},
 	"SOL": {
 		"url":    "https://finance.yahoo.com/quote/SOL-USD?p=SOL-USD&.tsrc=fin-srch",
-		"format": "🟣 $%.2f",
+		"format": "🟣 €%.2f",
 	},
 	"USD": {
 		"url":    "https://finance.yahoo.com/quote/RUB=X?p=RUB=X&.tsrc=fin-srch",
@@ -41,9 +41,9 @@ var currencies = map[string]map[string]string{
 		"url":    "https://finance.yahoo.com/quote/EURRUB=X?.tsrc=fin-srch",
 		"format": "💶 %.2f₽",
 	},
-	"GAS": {
-		"url":    "https://finance.yahoo.com/quote/TTF=F?p=TTF=F&.tsrc=fin-srch",
-		"format": "⛽️ €%.2f",
+	"OIL": {
+		"url":    "https://finance.yahoo.com/quote/BZM24.NYM?p=BZM24.NYM",
+		"format": "🛢️ $%.2f",
 	},
 }
 
@@ -113,7 +113,7 @@ func handlePizdec(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	order := [6]string{"BTC", "ETH", "USD", "EUR", "OIL", "GAS"}
+	order := [6]string{"BTC", "ETH", "SOL", "USD", "EUR", "OIL"}
 	values := make(map[string]float64)
 
 	var wg sync.WaitGroup
