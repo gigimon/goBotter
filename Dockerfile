@@ -16,4 +16,4 @@ RUN apk add --no-cache ca-certificates
 WORKDIR /opt
 COPY --from=builder /usr/src/app/goBotter /opt/goBotter
 
-CMD [ "/opt/goBotter" ]
+CMD [ "./goBotter" ]

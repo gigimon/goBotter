@@ -78,9 +78,9 @@ func getValue(currency string, url string, ch chan<- CurrencyValue, wg *sync.Wai
 	ratio := math.Pow(10, float64(2))
 	log.Printf("Get currency for %s", currency)
 	body := getPage(url)
-	item := htmlquery.FindOne(body, "//*[@data-test=\"qsp-price\"]")
+	item := htmlquery.FindOne(body, "//*[@data-testid=\"qsp-price\"]")
 
-	value := htmlquery.SelectAttr(item, "value")
+	value := htmlquery.SelectAttr(item, "data-value")
 	log.Printf("Value for %s: %s", currency, value)
 
 	if len(value) > 0 {
