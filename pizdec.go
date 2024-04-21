@@ -29,6 +29,10 @@ var currencies = map[string]map[string]string{
 		"url":    "https://finance.yahoo.com/quote/ETH-USD?p=ETH-USD&.tsrc=fin-srch",
 		"format": "♦ $%.2f",
 	},
+	"SOL": {
+		"url":    "https://finance.yahoo.com/quote/SOL-USD?p=SOL-USD&.tsrc=fin-srch",
+		"format": "🟣 $%.2f",
+	},
 	"USD": {
 		"url":    "https://finance.yahoo.com/quote/RUB=X?p=RUB=X&.tsrc=fin-srch",
 		"format": "💵 %.2f₽",
@@ -36,10 +40,6 @@ var currencies = map[string]map[string]string{
 	"EUR": {
 		"url":    "https://finance.yahoo.com/quote/EURRUB=X?.tsrc=fin-srch",
 		"format": "💶 %.2f₽",
-	},
-	"OIL": {
-		"url":    "https://finance.yahoo.com/quote/BZM24.NYM?p=BZM24.NYM",
-		"format": "🛢️ $%.2f",
 	},
 	"GAS": {
 		"url":    "https://finance.yahoo.com/quote/TTF=F?p=TTF=F&.tsrc=fin-srch",
