@@ -188,7 +188,7 @@ func handleDayTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 			continue
 		}
 
-		msg += fmt.Sprintf("%s: %d", userStat.username, userStat.dayCount)
+		msg += fmt.Sprintf("%s: %d\n", userStat.username, userStat.dayCount)
 	}
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
@@ -225,7 +225,7 @@ func handleTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 			continue
 		}
 
-		msg += fmt.Sprintf("%s: %d", userStat.username, userStat.msgCount)
+		msg += fmt.Sprintf("%s: %d\n", userStat.username, userStat.msgCount)
 	}
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: update.Message.Chat.ID,
