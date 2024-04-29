@@ -7,7 +7,7 @@ RUN go mod download && go mod verify
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -v -o /usr/src/app/goBotter
+RUN CGO_ENABLED=1 GOOS=linux go build -v -o /usr/src/app/goBotter
 
 
 FROM alpine:3
