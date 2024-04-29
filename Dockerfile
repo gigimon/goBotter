@@ -11,7 +11,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -v -o /usr/src/app/goBotter
 
 
 FROM ubuntu:24.04
-RUN apt update && apt upgrade -y
+RUN apt update && apt install ca-certificates && apt upgrade -y
 
 WORKDIR /opt
 COPY --from=builder /usr/src/app/goBotter /opt/goBotter
