@@ -40,11 +40,12 @@ func getLogsFilePath(channel string) string {
 
 func handleLogMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
 	var chatName string
-
-	if update.Message.Chat.Title != "" {
-		chatName = update.Message.Chat.Title
-	} else if update.Message.Chat.Type == "private" {
+	log.Println("Check chat type")
+	log.Println(update.Message.Chat)
+	if update.Message.Chat.Type == "private" {
 		chatName = update.Message.Chat.Username
+	} else {
+		chatName = update.Message.Chat.Title
 	}
 
 	logPath := getLogsFilePath(chatName)
@@ -59,4 +60,12 @@ func handleLogMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func handleAllMessages(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle all messages")
+	log.Println("Log message")
+	handleLogMessage(ctx, b, update)
+	log.Println("Handle message to stats")
+	handleMsgToStats(ctx, b, update)
 }
