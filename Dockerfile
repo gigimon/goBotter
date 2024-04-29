@@ -10,8 +10,8 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -v -o /usr/src/app/goBotter
 
 
-FROM alpine:3
-RUN apk add --no-cache ca-certificates
+FROM ubuntu:24.04
+RUN apt update && apt upgrade -y
 
 WORKDIR /opt
 COPY --from=builder /usr/src/app/goBotter /opt/goBotter
