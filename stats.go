@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
@@ -49,8 +50,10 @@ func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
 		}
 	}
 
+	wordsCount := len(strings.Fields(update.Message.Text))
+
 	userStat := statCollector[chanId][userId]
-	userStat.msgCount++
+	userStat.msgCount += int64(wordsCount)
 
 	prevDate := time.Unix(int64(userStat.lastMsg), 0)
 	curDate := time.Unix(int64(update.Message.Date), 0)
@@ -58,7 +61,7 @@ func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if prevDate.Day() != curDate.Day() {
 		userStat.dayCount = 0
 	}
-	userStat.dayCount++
+	userStat.dayCount += int64(wordsCount)
 	userStat.lastMsg = update.Message.Date
 
 	statCollector[chanId][userId] = userStat
