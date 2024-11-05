@@ -126,7 +126,7 @@ func handlePizdec(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	order := [6]string{"BTC", "ETH", "SOL", "USD", "EUR", "OIL"}
+	order := [6]string{"BTC", "ETH", "SOL", "USD", "EUR", "CNY"}
 	values := make(map[string]float64)
 
 	var wg sync.WaitGroup
