@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
-	"strconv"
 	"sync"
 
-	"github.com/antchfx/htmlquery"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
-	"golang.org/x/net/html"
 )
 
 type CurrencyValue struct {
@@ -22,81 +19,93 @@ type CurrencyValue struct {
 
 var currencies = map[string]map[string]string{
 	"BTC": {
-		"url":    "https://finance.yahoo.com/quote/BTC-USD?p=BTC-USD&.tsrc=fin-srch",
+		"type":   "crypto",
 		"format": "₿ $%.2f",
+		"key":    "bitcoin",
 	},
 	"ETH": {
-		"url":    "https://finance.yahoo.com/quote/ETH-USD?p=ETH-USD&.tsrc=fin-srch",
+		"type":   "crypto",
 		"format": "♦ $%.2f",
+		"key":    "ethereum",
 	},
 	"SOL": {
-		"url":    "https://finance.yahoo.com/quote/SOL-USD?p=SOL-USD&.tsrc=fin-srch",
+		"type":   "crypto",
 		"format": "🟣 €%.2f",
+		"key":    "solana",
 	},
 	"USD": {
-		"url":    "https://finance.yahoo.com/quote/RUB=X?p=RUB=X&.tsrc=fin-srch",
+		"type":   "currency",
 		"format": "💵 %.2f₽",
 	},
 	"EUR": {
-		"url":    "https://finance.yahoo.com/quote/EURRUB=X?.tsrc=fin-srch",
+		"type":   "currency",
 		"format": "💶 %.2f₽",
-	},
-	"OIL": {
-		"url":    "https://finance.yahoo.com/quote/BZM24.NYM?p=BZM24.NYM",
-		"format": "🛢️ $%.2f",
 	},
 }
 
-func getPage(url string) *html.Node {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func getCryptoValues(ch chan CurrencyValue, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin%2Csolana%2Cethereum&vs_currencies=usd&include_market_cap=false&include_24hr_vol=false&include_24hr_change=false&include_last_updated_at=false", nil)
+
 	if err != nil {
-		log.Printf("Can't create request to %s (%s)", url, err)
-		return nil
+		log.Printf("Can't get currencies from coingecko", err)
+		return
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("Can't send request to %s (%s)", url, err)
-		return nil
+		log.Printf("Can't send request to %s", err)
+		return
 	}
 
-	doc, err := htmlquery.Parse(resp.Body)
+	defer resp.Body.Close()
+	var prices map[string]map[string]float64
 
-	if err != nil {
-		log.Printf("Can't open page %s (%s)", url, err)
-		return nil
+	if err := json.NewDecoder(resp.Body).Decode(&prices); err != nil {
+		log.Fatalf("Fail to parse JSON: %v", err)
 	}
 
-	return doc
+	for k, v := range currencies {
+		if v["type"] == "crypto" {
+			ch <- CurrencyValue{currency: k, value: prices[v["key"]]["usd"]}
+		}
+	}
 }
 
-func getValue(currency string, url string, ch chan<- CurrencyValue, wg *sync.WaitGroup) {
+func getCurrencyPrices(ch chan CurrencyValue, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	ratio := math.Pow(10, float64(2))
-	log.Printf("Get currency for %s", currency)
-	body := getPage(url)
-	item := htmlquery.FindOne(body, "//*[@data-testid=\"qsp-price\"]")
+	req, err := http.NewRequest(http.MethodGet, "https://api.exchangerate-api.com/v4/latest/RUB", nil)
 
-	value := htmlquery.SelectAttr(item, "data-value")
-	log.Printf("Value for %s: %s", currency, value)
+	if err != nil {
+		log.Printf("Can't get currencies from exchange rate", err)
+		return
+	}
 
-	if len(value) > 0 {
-		cur, err := strconv.ParseFloat(value, 32)
-		if err != nil {
-			log.Printf("Can't parse to float value: %s (%s)", value, err)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("Can't send request to %s", err)
+		return
+	}
+
+	defer resp.Body.Close()
+	var data map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		log.Fatalf("Fail to parse JSON: %v", err)
+	}
+
+	rates, _ := data["rates"].(map[string]interface{})
+
+	for k, v := range currencies {
+		rate := rates[k]
+		if v["type"] == "currency" {
+			ch <- CurrencyValue{currency: k, value: 1 / rate.(float64)}
 		}
-
-		if currency == "GAS" {
-			cur = cur * 10
-		}
-
-		cur = math.Round(cur*ratio) / ratio
-		ch <- CurrencyValue{currency, cur}
-	} else {
-		ch <- CurrencyValue{currency, 0}
 	}
 }
 
@@ -119,10 +128,11 @@ func handlePizdec(ctx context.Context, b *bot.Bot, update *models.Update) {
 	var wg sync.WaitGroup
 	ch := make(chan CurrencyValue, len(currencies))
 
-	for k, v := range currencies {
-		wg.Add(1)
-		go getValue(k, v["url"], ch, &wg)
-	}
+	wg.Add(1)
+	go getCryptoValues(ch, &wg)
+	wg.Add(1)
+	go getCurrencyPrices(ch, &wg)
+
 	wg.Wait()
 	close(ch)
 
