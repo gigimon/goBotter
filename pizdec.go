@@ -41,6 +41,10 @@ var currencies = map[string]map[string]string{
 		"type":   "currency",
 		"format": "💶 %.2f₽",
 	},
+	"CNY": {
+		"type":   "currency",
+		"format": "🇨🇳 %.2f₽",
+	},
 }
 
 func getCryptoValues(ch chan CurrencyValue, wg *sync.WaitGroup) {
