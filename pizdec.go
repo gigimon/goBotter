@@ -43,7 +43,7 @@ var currencies = map[string]map[string]string{
 	},
 	"CNY": {
 		"type":   "currency",
-		"format": "🇨🇳 %.2f₽",
+		"format": "💴 %.2f₽",
 	},
 }
 
