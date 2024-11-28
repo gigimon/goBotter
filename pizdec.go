@@ -82,33 +82,38 @@ func getCryptoValues(ch chan CurrencyValue, wg *sync.WaitGroup) {
 func getCurrencyPrices(ch chan CurrencyValue, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	req, err := http.NewRequest(http.MethodGet, "https://api.exchangerate-api.com/v4/latest/RUB", nil)
-
-	if err != nil {
-		log.Printf("Can't get currencies from exchange rate", err)
-		return
-	}
-
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Printf("Can't send request to %s", err)
-		return
-	}
-
-	defer resp.Body.Close()
-	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		log.Fatalf("Fail to parse JSON: %v", err)
-	}
-
-	rates, _ := data["rates"].(map[string]interface{})
-
 	for k, v := range currencies {
-		rate := rates[k]
 		if v["type"] == "currency" {
-			ch <- CurrencyValue{currency: k, value: 1 / rate.(float64)}
+			req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://iss.moex.com/iss/statistics/engines/futures/markets/indicativerates/securities/%s/RUB.json", k), nil)
+
+			if err != nil {
+				log.Printf("Can't get currencies from exchange rate", err)
+				return
+			}
+
+			req.Header.Set("Accept", "application/json")
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				log.Printf("Can't send request to %s", err)
+				return
+			}
+
+			defer resp.Body.Close()
+
+			var data map[string]interface{}
+			if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+				log.Fatalf("Fail to parse JSON: %v", err)
+			}
+
+			data, ok := data["securities.current"].(map[string]interface{})
+			if !ok {
+			}
+			values, ok := data["data"].([]interface{})
+			v := values[0].([]interface{})
+			rate := v[3]
+
+			ch <- CurrencyValue{currency: k, value: rate.(float64)}
 		}
 	}
 }
