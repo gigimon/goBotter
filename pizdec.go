@@ -33,7 +33,7 @@ var currencies = map[string]map[string]string{
 	},
 	"SOL": {
 		"type":   "crypto",
-		"format": "🟣 €%.2f",
+		"format": "☀️ $%.2f",
 		"key":    "solana",
 	},
 	"USD": {
