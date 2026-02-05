@@ -7,11 +7,13 @@ RUN go mod download && go mod verify
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux go build -v -o /usr/src/app/goBotter
+RUN CGO_ENABLED=1 go build -v -o /usr/src/app/goBotter .
 
 
 FROM ubuntu:24.04
-RUN apt update && apt install ca-certificates -y && apt upgrade -y
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
 COPY --from=builder /usr/src/app/goBotter /opt/goBotter
