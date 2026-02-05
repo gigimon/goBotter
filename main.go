@@ -18,12 +18,19 @@ func main() {
 		bot.WithDefaultHandler(handleAllMessages),
 	}
 
+	token := os.Getenv("TELEGRAM_API_TOKEN")
+
+	if err := configureAllowedUpdates(token); err != nil {
+		log.Println("Warning: can't configure allowed updates for reactions")
+		log.Println(err)
+	}
+
 	debug := os.Getenv("DEBUG")
 	if len(debug) != 0 {
 		opts = append(opts, bot.WithDebug())
 	}
 
-	goBotter, err := bot.New(os.Getenv("TELEGRAM_API_TOKEN"), opts...)
+	goBotter, err := bot.New(token, opts...)
 	if err != nil {
 		log.Println("Can't create new bot instance")
 		log.Println(err)
