@@ -30,7 +30,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	go runStatSaver()
+	err = initStatsStorage()
+	if err != nil {
+		log.Println("Can't initialize stats storage")
+		log.Println(err)
+		os.Exit(1)
+	}
 
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!пиздец", bot.MatchTypeExact, handlePizdec)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!q", bot.MatchTypePrefix, handleQ)
@@ -40,6 +45,7 @@ func main() {
 
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топдень", bot.MatchTypePrefix, handleDayTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топ", bot.MatchTypePrefix, handleTop)
+	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!моястата", bot.MatchTypeExact, handleMyStat)
 
 	log.Println("Start bot")
 	goBotter.Start(ctx)
