@@ -19,6 +19,11 @@ type UserStat struct {
 	dayCount int64
 }
 
+type ReactionStat struct {
+	name  string
+	count int64
+}
+
 var statsDB *sql.DB
 
 const dayLayout = "2006-01-02"
@@ -58,6 +63,49 @@ func initStatsStorage() error {
 
 		CREATE INDEX IF NOT EXISTS idx_stats_daily_chat_day ON stats_daily(chat_id, day_date);
 		CREATE INDEX IF NOT EXISTS idx_stats_total_chat ON stats_total(chat_id);
+
+		CREATE TABLE IF NOT EXISTS reaction_given_total (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			username TEXT NOT NULL,
+			reactions_total INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS reaction_given_daily (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			day_date TEXT NOT NULL,
+			username TEXT NOT NULL,
+			reactions_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id, day_date)
+		);
+
+		CREATE TABLE IF NOT EXISTS reaction_popular_total (
+			chat_id INTEGER NOT NULL,
+			reaction_key TEXT NOT NULL,
+			reaction_label TEXT NOT NULL,
+			reactions_total INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, reaction_key)
+		);
+
+		CREATE TABLE IF NOT EXISTS reaction_popular_daily (
+			chat_id INTEGER NOT NULL,
+			day_date TEXT NOT NULL,
+			reaction_key TEXT NOT NULL,
+			reaction_label TEXT NOT NULL,
+			reactions_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, day_date, reaction_key)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_reaction_given_daily_chat_day ON reaction_given_daily(chat_id, day_date);
+		CREATE INDEX IF NOT EXISTS idx_reaction_given_total_chat ON reaction_given_total(chat_id);
+		CREATE INDEX IF NOT EXISTS idx_reaction_popular_daily_chat_day ON reaction_popular_daily(chat_id, day_date);
+		CREATE INDEX IF NOT EXISTS idx_reaction_popular_total_chat ON reaction_popular_total(chat_id);
 	`); err != nil {
 		db.Close()
 		return fmt.Errorf("can't create stat tables: %w", err)
@@ -144,6 +192,161 @@ func getUserName(from *models.User) string {
 		return fullName
 	}
 	return fmt.Sprintf("id:%d", from.ID)
+}
+
+func reactionKeyAndLabel(reaction models.ReactionType) (string, string) {
+	if reaction.ReactionTypeEmoji != nil {
+		return "emoji:" + reaction.ReactionTypeEmoji.Emoji, reaction.ReactionTypeEmoji.Emoji
+	}
+	if reaction.ReactionTypeCustomEmoji != nil {
+		customID := reaction.ReactionTypeCustomEmoji.CustomEmojiID
+		return "custom:" + customID, "custom:" + customID
+	}
+	return "", ""
+}
+
+func reactionCounter(reactions []models.ReactionType) map[string]int {
+	counter := make(map[string]int)
+	for _, reaction := range reactions {
+		key, _ := reactionKeyAndLabel(reaction)
+		if key == "" {
+			continue
+		}
+		counter[key]++
+	}
+	return counter
+}
+
+func reactorIdentity(update *models.MessageReactionUpdated) (int64, string, bool) {
+	if update.User != nil {
+		return update.User.ID, getUserName(update.User), true
+	}
+	if update.ActorChat != nil {
+		return update.ActorChat.ID, update.ActorChat.Title, true
+	}
+	return 0, "", false
+}
+
+func handleReactionToStats(ctx context.Context, update *models.MessageReactionUpdated) {
+	log.Println("Handle reaction to stats")
+	if update == nil {
+		return
+	}
+	if update.Chat.Type == "private" {
+		return
+	}
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	userID, username, ok := reactorIdentity(update)
+	if !ok {
+		return
+	}
+
+	oldCounter := reactionCounter(update.OldReaction)
+	newCounter := reactionCounter(update.NewReaction)
+
+	addedTotal := 0
+	addedByKey := make(map[string]int)
+	addedLabelByKey := make(map[string]string)
+
+	for _, reaction := range update.NewReaction {
+		key, label := reactionKeyAndLabel(reaction)
+		if key == "" {
+			continue
+		}
+		addedLabelByKey[key] = label
+	}
+
+	for key, newCount := range newCounter {
+		diff := newCount - oldCounter[key]
+		if diff <= 0 {
+			continue
+		}
+		addedByKey[key] = diff
+		addedTotal += diff
+	}
+
+	if addedTotal == 0 {
+		return
+	}
+
+	chatID := update.Chat.ID
+	msgDate := update.Date
+	dayDate := time.Unix(int64(msgDate), 0).In(time.Local).Format(dayLayout)
+
+	tx, err := statsDB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Println("Can't start reaction stats transaction")
+		log.Println(err)
+		return
+	}
+
+	if _, err = tx.Exec(`
+		INSERT INTO reaction_given_total(chat_id, user_id, username, reactions_total, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id) DO UPDATE SET
+			username = excluded.username,
+			reactions_total = reaction_given_total.reactions_total + excluded.reactions_total,
+			updated_at = excluded.updated_at
+	`, chatID, userID, username, addedTotal, msgDate); err != nil {
+		_ = tx.Rollback()
+		log.Println("Can't save total given reactions stats")
+		log.Println(err)
+		return
+	}
+
+	if _, err = tx.Exec(`
+		INSERT INTO reaction_given_daily(chat_id, user_id, day_date, username, reactions_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id, day_date) DO UPDATE SET
+			username = excluded.username,
+			reactions_count = reaction_given_daily.reactions_count + excluded.reactions_count,
+			updated_at = excluded.updated_at
+	`, chatID, userID, dayDate, username, addedTotal, msgDate); err != nil {
+		_ = tx.Rollback()
+		log.Println("Can't save daily given reactions stats")
+		log.Println(err)
+		return
+	}
+
+	for key, delta := range addedByKey {
+		label := addedLabelByKey[key]
+		if _, err = tx.Exec(`
+			INSERT INTO reaction_popular_total(chat_id, reaction_key, reaction_label, reactions_total, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, reaction_key) DO UPDATE SET
+				reaction_label = excluded.reaction_label,
+				reactions_total = reaction_popular_total.reactions_total + excluded.reactions_total,
+				updated_at = excluded.updated_at
+		`, chatID, key, label, delta, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save total popular reaction stats")
+			log.Println(err)
+			return
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO reaction_popular_daily(chat_id, day_date, reaction_key, reaction_label, reactions_count, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, day_date, reaction_key) DO UPDATE SET
+				reaction_label = excluded.reaction_label,
+				reactions_count = reaction_popular_daily.reactions_count + excluded.reactions_count,
+				updated_at = excluded.updated_at
+		`, chatID, dayDate, key, label, delta, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save daily popular reaction stats")
+			log.Println(err)
+			return
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		log.Println("Can't commit reaction stats transaction")
+		log.Println(err)
+	}
 }
 
 func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -324,6 +527,168 @@ func handleMyStat(ctx context.Context, b *bot.Bot, update *models.Update) {
 	msg := fmt.Sprintf("%s, твоя статистика (слов):\nСегодня: %d\nЗа всё время: %d", name, todayWords, totalWords)
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: chatId,
+		Text:   msg,
+	})
+}
+
+func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle reaction day top")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	today := time.Now().In(time.Local).Format(dayLayout)
+
+	userRows, err := statsDB.Query("SELECT username, reactions_count FROM reaction_given_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
+	if err != nil {
+		log.Println("Can't get day top by users reactions")
+		log.Println(err)
+		return
+	}
+	defer userRows.Close()
+
+	reactionRows, err := statsDB.Query("SELECT reaction_label, reactions_count FROM reaction_popular_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
+	if err != nil {
+		log.Println("Can't get day top popular reactions")
+		log.Println(err)
+		return
+	}
+	defer reactionRows.Close()
+
+	msg := "Реакции за день:\n\nТоп кто ставил:\n"
+	place := 1
+	for userRows.Next() {
+		var item ReactionStat
+		if err = userRows.Scan(&item.name, &item.count); err != nil {
+			log.Println("Can't scan day top by users reactions")
+			log.Println(err)
+			continue
+		}
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nТоп популярных реакций:\n"
+	place = 1
+	for reactionRows.Next() {
+		var item ReactionStat
+		if err = reactionRows.Scan(&item.name, &item.count); err != nil {
+			log.Println("Can't scan day popular reactions")
+			log.Println(err)
+			continue
+		}
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных"
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   msg,
+	})
+}
+
+func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle reaction top")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+
+	userRows, err := statsDB.Query("SELECT username, reactions_total FROM reaction_given_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
+	if err != nil {
+		log.Println("Can't get all-time top by users reactions")
+		log.Println(err)
+		return
+	}
+	defer userRows.Close()
+
+	reactionRows, err := statsDB.Query("SELECT reaction_label, reactions_total FROM reaction_popular_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
+	if err != nil {
+		log.Println("Can't get all-time top popular reactions")
+		log.Println(err)
+		return
+	}
+	defer reactionRows.Close()
+
+	msg := "Реакции за всё время:\n\nТоп кто ставил:\n"
+	place := 1
+	for userRows.Next() {
+		var item ReactionStat
+		if err = userRows.Scan(&item.name, &item.count); err != nil {
+			log.Println("Can't scan all-time top by users reactions")
+			log.Println(err)
+			continue
+		}
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nТоп популярных реакций:\n"
+	place = 1
+	for reactionRows.Next() {
+		var item ReactionStat
+		if err = reactionRows.Scan(&item.name, &item.count); err != nil {
+			log.Println("Can't scan all-time popular reactions")
+			log.Println(err)
+			continue
+		}
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных"
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   msg,
+	})
+}
+
+func handleMyReaction(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle my reaction")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+	today := time.Now().In(time.Local).Format(dayLayout)
+
+	var todayCount int64
+	err := statsDB.QueryRow("SELECT COALESCE(reactions_count, 0) FROM reaction_given_daily WHERE chat_id = ? AND user_id = ? AND day_date = ?", chatID, userID, today).Scan(&todayCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("Can't get daily reaction stat")
+		log.Println(err)
+		return
+	}
+
+	var totalCount int64
+	err = statsDB.QueryRow("SELECT COALESCE(reactions_total, 0) FROM reaction_given_total WHERE chat_id = ? AND user_id = ?", chatID, userID).Scan(&totalCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("Can't get total reaction stat")
+		log.Println(err)
+		return
+	}
+
+	name := getUserName(update.Message.From)
+	msg := fmt.Sprintf("%s, твои реакции:\nСегодня добавлено: %d\nЗа всё время добавлено: %d", name, todayCount, totalCount)
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
 		Text:   msg,
 	})
 }

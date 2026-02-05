@@ -64,6 +64,20 @@ func handleLogMessage(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 func handleAllMessages(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Println("Handle all messages")
+	if update == nil {
+		return
+	}
+
+	if update.MessageReaction != nil {
+		log.Println("Handle reaction update to stats")
+		handleReactionToStats(ctx, update.MessageReaction)
+		return
+	}
+
+	if update.Message == nil {
+		return
+	}
+
 	log.Println("Log message")
 	handleLogMessage(ctx, b, update)
 	log.Println("Handle message to stats")
