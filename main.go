@@ -43,8 +43,8 @@ func main() {
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!aq", bot.MatchTypePrefix, handleAq)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!fq", bot.MatchTypePrefix, handleFq)
 
-	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топдень", bot.MatchTypePrefix, handleDayTop)
-	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топ", bot.MatchTypePrefix, handleTop)
+	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топдень", bot.MatchTypeExact, handleDayTop)
+	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топ", bot.MatchTypeExact, handleTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!моястата", bot.MatchTypeExact, handleMyStat)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топреакдень", bot.MatchTypeExact, handleReactionDayTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топреак", bot.MatchTypeExact, handleReactionTop)

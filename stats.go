@@ -28,6 +28,25 @@ var statsDB *sql.DB
 
 const dayLayout = "2006-01-02"
 
+func sendText(ctx context.Context, b *bot.Bot, update *models.Update, text string) {
+	if update == nil || update.Message == nil {
+		return
+	}
+
+	params := &bot.SendMessageParams{
+		ChatID: update.Message.Chat.ID,
+		Text:   text,
+	}
+	if update.Message.MessageThreadID != 0 {
+		params.MessageThreadID = update.Message.MessageThreadID
+	}
+
+	if _, err := b.SendMessage(ctx, params); err != nil {
+		log.Println("Can't send message")
+		log.Println(err)
+	}
+}
+
 func initStatsStorage() error {
 	db, err := sql.Open("sqlite3", "file:stats.db?_busy_timeout=5000&_journal_mode=WAL")
 	if err != nil {
@@ -449,10 +468,7 @@ func handleDayTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 		msg += "Сегодня сообщений пока нет"
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   msg,
-	})
+	sendText(ctx, b, update, msg)
 }
 
 func handleTop(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -490,10 +506,7 @@ func handleTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 		msg += "Сообщений пока нет"
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   msg,
-	})
+	sendText(ctx, b, update, msg)
 }
 
 func handleMyStat(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -525,10 +538,7 @@ func handleMyStat(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	name := getUserName(update.Message.From)
 	msg := fmt.Sprintf("%s, твоя статистика (слов):\nСегодня: %d\nЗа всё время: %d", name, todayWords, totalWords)
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatId,
-		Text:   msg,
-	})
+	sendText(ctx, b, update, msg)
 }
 
 func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -589,10 +599,7 @@ func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update
 		msg += "Пока нет данных"
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   msg,
-	})
+	sendText(ctx, b, update, msg)
 }
 
 func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -652,10 +659,7 @@ func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 		msg += "Пока нет данных"
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   msg,
-	})
+	sendText(ctx, b, update, msg)
 }
 
 func handleMyReaction(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -687,8 +691,5 @@ func handleMyReaction(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	name := getUserName(update.Message.From)
 	msg := fmt.Sprintf("%s, твои реакции:\nСегодня добавлено: %d\nЗа всё время добавлено: %d", name, todayCount, totalCount)
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   msg,
-	})
+	sendText(ctx, b, update, msg)
 }
