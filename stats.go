@@ -24,6 +24,27 @@ type ReactionStat struct {
 	count int64
 }
 
+func loadReactionStats(query string, args ...any) ([]ReactionStat, error) {
+	rows, err := statsDB.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := make([]ReactionStat, 0, 10)
+	for rows.Next() {
+		var item ReactionStat
+		if err = rows.Scan(&item.name, &item.count); err != nil {
+			return nil, err
+		}
+		stats = append(stats, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
 var statsDB *sql.DB
 
 const dayLayout = "2006-01-02"
@@ -551,31 +572,23 @@ func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update
 	chatID := update.Message.Chat.ID
 	today := time.Now().In(time.Local).Format(dayLayout)
 
-	userRows, err := statsDB.Query("SELECT username, reactions_count FROM reaction_given_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
+	userStats, err := loadReactionStats("SELECT username, reactions_count FROM reaction_given_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
 	if err != nil {
 		log.Println("Can't get day top by users reactions")
 		log.Println(err)
 		return
 	}
-	defer userRows.Close()
 
-	reactionRows, err := statsDB.Query("SELECT reaction_label, reactions_count FROM reaction_popular_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
+	reactionStats, err := loadReactionStats("SELECT reaction_label, reactions_count FROM reaction_popular_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
 	if err != nil {
 		log.Println("Can't get day top popular reactions")
 		log.Println(err)
 		return
 	}
-	defer reactionRows.Close()
 
 	msg := "Реакции за день:\n\nТоп кто ставил:\n"
 	place := 1
-	for userRows.Next() {
-		var item ReactionStat
-		if err = userRows.Scan(&item.name, &item.count); err != nil {
-			log.Println("Can't scan day top by users reactions")
-			log.Println(err)
-			continue
-		}
+	for _, item := range userStats {
 		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
 		place++
 	}
@@ -585,13 +598,7 @@ func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update
 
 	msg += "\nТоп популярных реакций:\n"
 	place = 1
-	for reactionRows.Next() {
-		var item ReactionStat
-		if err = reactionRows.Scan(&item.name, &item.count); err != nil {
-			log.Println("Can't scan day popular reactions")
-			log.Println(err)
-			continue
-		}
+	for _, item := range reactionStats {
 		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
 		place++
 	}
@@ -611,31 +618,23 @@ func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	chatID := update.Message.Chat.ID
 
-	userRows, err := statsDB.Query("SELECT username, reactions_total FROM reaction_given_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
+	userStats, err := loadReactionStats("SELECT username, reactions_total FROM reaction_given_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
 	if err != nil {
 		log.Println("Can't get all-time top by users reactions")
 		log.Println(err)
 		return
 	}
-	defer userRows.Close()
 
-	reactionRows, err := statsDB.Query("SELECT reaction_label, reactions_total FROM reaction_popular_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
+	reactionStats, err := loadReactionStats("SELECT reaction_label, reactions_total FROM reaction_popular_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
 	if err != nil {
 		log.Println("Can't get all-time top popular reactions")
 		log.Println(err)
 		return
 	}
-	defer reactionRows.Close()
 
 	msg := "Реакции за всё время:\n\nТоп кто ставил:\n"
 	place := 1
-	for userRows.Next() {
-		var item ReactionStat
-		if err = userRows.Scan(&item.name, &item.count); err != nil {
-			log.Println("Can't scan all-time top by users reactions")
-			log.Println(err)
-			continue
-		}
+	for _, item := range userStats {
 		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
 		place++
 	}
@@ -645,13 +644,7 @@ func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	msg += "\nТоп популярных реакций:\n"
 	place = 1
-	for reactionRows.Next() {
-		var item ReactionStat
-		if err = reactionRows.Scan(&item.name, &item.count); err != nil {
-			log.Println("Can't scan all-time popular reactions")
-			log.Println(err)
-			continue
-		}
+	for _, item := range reactionStats {
 		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
 		place++
 	}
