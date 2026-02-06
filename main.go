@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -18,11 +20,14 @@ func main() {
 	opts := []bot.Option{
 		bot.WithDefaultHandler(handleAllMessages),
 		bot.WithAllowedUpdates(bot.AllowedUpdates{
-			"message",
-			"edited_message",
-			"callback_query",
-			"message_reaction",
-			"message_reaction_count",
+			models.AllowedUpdateMessage,
+			models.AllowedUpdateEditedMessage,
+			models.AllowedUpdateCallbackQuery,
+			models.AllowedUpdateMessageReaction,
+			models.AllowedUpdateMessageReactionCount,
+		}),
+		bot.WithHTTPClient(61*time.Second, &updatesDebugHTTPClient{
+			base: &http.Client{Timeout: 61 * time.Second},
 		}),
 	}
 

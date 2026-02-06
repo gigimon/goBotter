@@ -85,11 +85,13 @@ func handleAllMessages(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	if update.MessageReaction != nil {
+		ensureBotStatusLogged(ctx, b, update.MessageReaction.Chat.ID)
 		log.Println("Handle reaction update to stats")
 		handleReactionToStats(ctx, update.MessageReaction)
 		return
 	}
 	if update.MessageReactionCount != nil {
+		ensureBotStatusLogged(ctx, b, update.MessageReactionCount.Chat.ID)
 		log.Println("Handle reaction count update to stats")
 		handleReactionCountToStats(ctx, update.MessageReactionCount)
 		return
@@ -97,6 +99,9 @@ func handleAllMessages(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	if update.Message == nil {
 		return
+	}
+	if update.Message.Chat.Type != "private" {
+		ensureBotStatusLogged(ctx, b, update.Message.Chat.ID)
 	}
 
 	log.Println("Log message")
