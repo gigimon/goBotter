@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -66,6 +67,21 @@ func handleAllMessages(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Println("Handle all messages")
 	if update == nil {
 		return
+	}
+	log.Printf(
+		"Update flags: id=%d message=%t edited_message=%t callback_query=%t message_reaction=%t message_reaction_count=%t",
+		update.ID,
+		update.Message != nil,
+		update.EditedMessage != nil,
+		update.CallbackQuery != nil,
+		update.MessageReaction != nil,
+		update.MessageReactionCount != nil,
+	)
+	if dump, err := json.Marshal(update); err != nil {
+		log.Println("Can't marshal update dump")
+		log.Println(err)
+	} else {
+		log.Printf("Update dump: %s", string(dump))
 	}
 
 	if update.MessageReaction != nil {

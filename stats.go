@@ -495,6 +495,16 @@ func handleReactionCountToStats(ctx context.Context, update *models.MessageReact
 	}
 }
 
+func handleReactionUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle reaction update via match-func")
+	handleReactionToStats(ctx, update.MessageReaction)
+}
+
+func handleReactionCountUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle reaction count update via match-func")
+	handleReactionCountToStats(ctx, update.MessageReactionCount)
+}
+
 func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Println("Handle message to stats")
 	if update.Message.Chat.Type == "private" {

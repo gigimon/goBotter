@@ -7,6 +7,7 @@ import (
 	"os/signal"
 
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 func main() {
@@ -59,6 +60,12 @@ func main() {
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топреак", bot.MatchTypeExact, handleReactionTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топреакт", bot.MatchTypeExact, handleReactionTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!мояреак", bot.MatchTypeExact, handleMyReaction)
+	goBotter.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return update != nil && update.MessageReaction != nil
+	}, handleReactionUpdate)
+	goBotter.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		return update != nil && update.MessageReactionCount != nil
+	}, handleReactionCountUpdate)
 
 	log.Println("Start bot")
 	goBotter.Start(ctx)
