@@ -169,6 +169,30 @@ func initStatsStorage() error {
 		CREATE INDEX IF NOT EXISTS idx_reaction_received_daily_chat_day ON reaction_received_daily(chat_id, day_date);
 		CREATE INDEX IF NOT EXISTS idx_reaction_received_total_chat ON reaction_received_total(chat_id);
 
+		CREATE TABLE IF NOT EXISTS reaction_received_type_total (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			reaction_key TEXT NOT NULL,
+			reaction_label TEXT NOT NULL,
+			reactions_total INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id, reaction_key)
+		);
+
+		CREATE TABLE IF NOT EXISTS reaction_received_type_daily (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			day_date TEXT NOT NULL,
+			reaction_key TEXT NOT NULL,
+			reaction_label TEXT NOT NULL,
+			reactions_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id, day_date, reaction_key)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_reaction_received_type_total_chat_user ON reaction_received_type_total(chat_id, user_id);
+		CREATE INDEX IF NOT EXISTS idx_reaction_received_type_daily_chat_user_day ON reaction_received_type_daily(chat_id, user_id, day_date);
+
 		CREATE TABLE IF NOT EXISTS reaction_message_state (
 			chat_id INTEGER NOT NULL,
 			message_id INTEGER NOT NULL,
@@ -390,6 +414,34 @@ func upsertReactionReceived(tx *sql.Tx, chatID int64, receiverID int64, receiver
 	return nil
 }
 
+func upsertReactionReceivedByType(tx *sql.Tx, chatID int64, receiverID int64, dayDate string, reactionKey string, reactionLabel string, delta int, updatedAt int) error {
+	if delta <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO reaction_received_type_total(chat_id, user_id, reaction_key, reaction_label, reactions_total, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id, reaction_key) DO UPDATE SET
+			reaction_label = excluded.reaction_label,
+			reactions_total = reaction_received_type_total.reactions_total + excluded.reactions_total,
+			updated_at = excluded.updated_at
+	`, chatID, receiverID, reactionKey, reactionLabel, delta, updatedAt); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO reaction_received_type_daily(chat_id, user_id, day_date, reaction_key, reaction_label, reactions_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id, day_date, reaction_key) DO UPDATE SET
+			reaction_label = excluded.reaction_label,
+			reactions_count = reaction_received_type_daily.reactions_count + excluded.reactions_count,
+			updated_at = excluded.updated_at
+	`, chatID, receiverID, dayDate, reactionKey, reactionLabel, delta, updatedAt); err != nil {
+		return err
+	}
+	return nil
+}
+
 func handleReactionToStats(ctx context.Context, update *models.MessageReactionUpdated) {
 	log.Println("Handle reaction to stats")
 	if update == nil {
@@ -512,6 +564,15 @@ func handleReactionToStats(ctx context.Context, update *models.MessageReactionUp
 			log.Println(err)
 			return
 		}
+
+		if hasReceiver {
+			if err = upsertReactionReceivedByType(tx, chatID, receiverID, dayDate, key, label, delta, msgDate); err != nil {
+				_ = tx.Rollback()
+				log.Println("Can't save received reactions by type stats")
+				log.Println(err)
+				return
+			}
+		}
 	}
 
 	if hasReceiver {
@@ -627,6 +688,15 @@ func handleReactionCountToStats(ctx context.Context, update *models.MessageReact
 			log.Println("Can't save daily popular reaction stats from count update")
 			log.Println(err)
 			return
+		}
+
+		if hasReceiver {
+			if err = upsertReactionReceivedByType(tx, chatID, receiverID, dayDate, key, label, int(delta), msgDate); err != nil {
+				_ = tx.Rollback()
+				log.Println("Can't save received reactions by type stats from count update")
+				log.Println(err)
+				return
+			}
 		}
 	}
 
@@ -873,7 +943,7 @@ func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update
 		place++
 	}
 	if place == 1 {
-		msg += "Пока нет данных\n"
+		msg += "Пока нет данных (нужны новые сообщения после обновления статистики)\n"
 	}
 
 	msg += "\nТоп кому ставили:\n"
@@ -883,7 +953,7 @@ func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update
 		place++
 	}
 	if place == 1 {
-		msg += "Пока нет данных\n"
+		msg += "Пока нет данных (нужны новые сообщения после обновления статистики)\n"
 	}
 
 	msg += "\nТоп популярных реакций:\n"
@@ -1021,6 +1091,40 @@ func handleMyReceivedReaction(ctx context.Context, b *bot.Bot, update *models.Up
 	}
 
 	name := getUserName(update.Message.From)
+	dayTypeStats, err := loadReactionStats("SELECT reaction_label, reactions_count FROM reaction_received_type_daily WHERE chat_id = ? AND user_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 5", chatID, userID, today)
+	if err != nil {
+		log.Println("Can't get daily received reaction by type stat")
+		log.Println(err)
+		return
+	}
+
+	totalTypeStats, err := loadReactionStats("SELECT reaction_label, reactions_total FROM reaction_received_type_total WHERE chat_id = ? AND user_id = ? ORDER BY reactions_total DESC LIMIT 5", chatID, userID)
+	if err != nil {
+		log.Println("Can't get total received reaction by type stat")
+		log.Println(err)
+		return
+	}
+
 	msg := fmt.Sprintf("%s, твои полученные реакции:\nСегодня получено: %d\nЗа всё время получено: %d", name, todayCount, totalCount)
+	msg += "\n\nСегодня по типам:\n"
+	place := 1
+	for _, item := range dayTypeStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nЗа всё время по типам:\n"
+	place = 1
+	for _, item := range totalTypeStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных"
+	}
+
 	sendText(ctx, b, update, msg)
 }
