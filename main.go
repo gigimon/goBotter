@@ -16,6 +16,13 @@ func main() {
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(handleAllMessages),
+		bot.WithAllowedUpdates(bot.AllowedUpdates{
+			"message",
+			"edited_message",
+			"callback_query",
+			"message_reaction",
+			"message_reaction_count",
+		}),
 	}
 
 	token := os.Getenv("TELEGRAM_API_TOKEN")
@@ -54,5 +61,5 @@ func main() {
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!мояреак", bot.MatchTypeExact, handleMyReaction)
 
 	log.Println("Start bot")
-	startPolling(ctx, goBotter, token)
+	goBotter.Start(ctx)
 }
