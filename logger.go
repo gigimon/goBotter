@@ -7,11 +7,44 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
+
+var checkedChatStatus sync.Map
+
+func ensureBotStatusLogged(ctx context.Context, b *bot.Bot, chatID int64) {
+	if _, exists := checkedChatStatus.Load(chatID); exists {
+		return
+	}
+
+	me, err := b.GetMe(ctx)
+	if err != nil {
+		log.Println("Can't get bot profile for chat status check")
+		log.Println(err)
+		return
+	}
+
+	member, err := b.GetChatMember(ctx, &bot.GetChatMemberParams{
+		ChatID: chatID,
+		UserID: me.ID,
+	})
+	if err != nil {
+		log.Println("Can't get bot chat member status")
+		log.Println(err)
+		return
+	}
+
+	log.Printf("Bot membership in chat %d: %s", chatID, member.Type)
+	if member.Type != "administrator" && member.Type != "creator" {
+		log.Printf("WARNING: bot is not admin in chat %d, reaction updates won't arrive", chatID)
+	}
+
+	checkedChatStatus.Store(chatID, true)
+}
 
 func getLogsFilePath(channel string) string {
 	currentTime := time.Now()

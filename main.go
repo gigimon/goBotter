@@ -1,16 +1,37 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 )
+
+type updatesDebugHTTPClient struct {
+	base *http.Client
+}
+
+func (c *updatesDebugHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	if req != nil && req.URL != nil && strings.HasSuffix(req.URL.Path, "/getUpdates") && req.Body != nil {
+		body, err := io.ReadAll(req.Body)
+		if err == nil {
+			log.Printf("getUpdates payload: %s", string(body))
+			req.Body = io.NopCloser(bytes.NewReader(body))
+		} else {
+			log.Println("Can't read getUpdates request body")
+			log.Println(err)
+		}
+	}
+	return c.base.Do(req)
+}
 
 func main() {
 	log.Println("Start application")
