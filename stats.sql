@@ -77,3 +77,37 @@ CREATE TABLE IF NOT EXISTS reaction_message_state (
     updated_at INTEGER NOT NULL,
     PRIMARY KEY(chat_id, message_id, reaction_key)
 );
+CREATE INDEX IF NOT EXISTS idx_reaction_message_state_chat_msg ON reaction_message_state(chat_id, message_id);
+
+CREATE TABLE IF NOT EXISTS reaction_received_total (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    reactions_total INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS reaction_received_daily (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day_date TEXT NOT NULL,
+    username TEXT NOT NULL,
+    reactions_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, user_id, day_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reaction_received_daily_chat_day ON reaction_received_daily(chat_id, day_date);
+CREATE INDEX IF NOT EXISTS idx_reaction_received_total_chat ON reaction_received_total(chat_id);
+
+CREATE TABLE IF NOT EXISTS message_author_state (
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    author_user_id INTEGER NOT NULL,
+    author_name TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_author_state_chat_msg ON message_author_state(chat_id, message_id);

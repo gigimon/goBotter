@@ -86,6 +86,7 @@ func main() {
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топреак", bot.MatchTypeExact, handleReactionTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!топреакт", bot.MatchTypeExact, handleReactionTop)
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!мояреак", bot.MatchTypeExact, handleMyReaction)
+	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!мойреак", bot.MatchTypeExact, handleMyReceivedReaction)
 	goBotter.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		return update != nil && update.MessageReaction != nil
 	}, handleReactionUpdate)

@@ -147,6 +147,28 @@ func initStatsStorage() error {
 		CREATE INDEX IF NOT EXISTS idx_reaction_popular_daily_chat_day ON reaction_popular_daily(chat_id, day_date);
 		CREATE INDEX IF NOT EXISTS idx_reaction_popular_total_chat ON reaction_popular_total(chat_id);
 
+		CREATE TABLE IF NOT EXISTS reaction_received_total (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			username TEXT NOT NULL,
+			reactions_total INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS reaction_received_daily (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			day_date TEXT NOT NULL,
+			username TEXT NOT NULL,
+			reactions_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id, day_date)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_reaction_received_daily_chat_day ON reaction_received_daily(chat_id, day_date);
+		CREATE INDEX IF NOT EXISTS idx_reaction_received_total_chat ON reaction_received_total(chat_id);
+
 		CREATE TABLE IF NOT EXISTS reaction_message_state (
 			chat_id INTEGER NOT NULL,
 			message_id INTEGER NOT NULL,
@@ -156,6 +178,18 @@ func initStatsStorage() error {
 			updated_at INTEGER NOT NULL,
 			PRIMARY KEY(chat_id, message_id, reaction_key)
 		);
+		CREATE INDEX IF NOT EXISTS idx_reaction_message_state_chat_msg ON reaction_message_state(chat_id, message_id);
+
+		CREATE TABLE IF NOT EXISTS message_author_state (
+			chat_id INTEGER NOT NULL,
+			message_id INTEGER NOT NULL,
+			author_user_id INTEGER NOT NULL,
+			author_name TEXT NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, message_id)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_message_author_state_chat_msg ON message_author_state(chat_id, message_id);
 	`); err != nil {
 		db.Close()
 		return fmt.Errorf("can't create stat tables: %w", err)
@@ -277,6 +311,85 @@ func reactorIdentity(update *models.MessageReactionUpdated) (int64, string, bool
 	return 0, "", false
 }
 
+func getChatName(chat *models.Chat) string {
+	if chat == nil {
+		return ""
+	}
+	if chat.Title != "" {
+		return chat.Title
+	}
+	if chat.Username != "" {
+		return chat.Username
+	}
+	return fmt.Sprintf("chat:%d", chat.ID)
+}
+
+func getMessageAuthor(msg *models.Message) (int64, string, bool) {
+	if msg == nil {
+		return 0, "", false
+	}
+	if msg.From != nil {
+		return msg.From.ID, getUserName(msg.From), true
+	}
+	if msg.SenderChat != nil {
+		return msg.SenderChat.ID, getChatName(msg.SenderChat), true
+	}
+	return 0, "", false
+}
+
+func upsertMessageAuthorState(tx *sql.Tx, chatID int64, messageID int, authorID int64, authorName string, updatedAt int) error {
+	_, err := tx.Exec(`
+		INSERT INTO message_author_state(chat_id, message_id, author_user_id, author_name, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, message_id) DO UPDATE SET
+			author_user_id = excluded.author_user_id,
+			author_name = excluded.author_name,
+			updated_at = excluded.updated_at
+	`, chatID, messageID, authorID, authorName, updatedAt)
+	return err
+}
+
+func getMessageAuthorState(tx *sql.Tx, chatID int64, messageID int) (int64, string, bool, error) {
+	var receiverID int64
+	var receiverName string
+	err := tx.QueryRow("SELECT author_user_id, author_name FROM message_author_state WHERE chat_id = ? AND message_id = ?", chatID, messageID).Scan(&receiverID, &receiverName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, "", false, nil
+		}
+		return 0, "", false, err
+	}
+	return receiverID, receiverName, true, nil
+}
+
+func upsertReactionReceived(tx *sql.Tx, chatID int64, receiverID int64, receiverName string, dayDate string, totalDelta int, updatedAt int) error {
+	if totalDelta <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO reaction_received_total(chat_id, user_id, username, reactions_total, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id) DO UPDATE SET
+			username = excluded.username,
+			reactions_total = reaction_received_total.reactions_total + excluded.reactions_total,
+			updated_at = excluded.updated_at
+	`, chatID, receiverID, receiverName, totalDelta, updatedAt); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO reaction_received_daily(chat_id, user_id, day_date, username, reactions_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id, day_date) DO UPDATE SET
+			username = excluded.username,
+			reactions_count = reaction_received_daily.reactions_count + excluded.reactions_count,
+			updated_at = excluded.updated_at
+	`, chatID, receiverID, dayDate, receiverName, totalDelta, updatedAt); err != nil {
+		return err
+	}
+	return nil
+}
+
 func handleReactionToStats(ctx context.Context, update *models.MessageReactionUpdated) {
 	log.Println("Handle reaction to stats")
 	if update == nil {
@@ -330,6 +443,14 @@ func handleReactionToStats(ctx context.Context, update *models.MessageReactionUp
 	tx, err := statsDB.BeginTx(ctx, nil)
 	if err != nil {
 		log.Println("Can't start reaction stats transaction")
+		log.Println(err)
+		return
+	}
+
+	receiverID, receiverName, hasReceiver, err := getMessageAuthorState(tx, chatID, update.MessageID)
+	if err != nil {
+		_ = tx.Rollback()
+		log.Println("Can't read message author state for reaction update")
 		log.Println(err)
 		return
 	}
@@ -393,6 +514,15 @@ func handleReactionToStats(ctx context.Context, update *models.MessageReactionUp
 		}
 	}
 
+	if hasReceiver {
+		if err = upsertReactionReceived(tx, chatID, receiverID, receiverName, dayDate, addedTotal, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save received reactions stats")
+			log.Println(err)
+			return
+		}
+	}
+
 	if err = tx.Commit(); err != nil {
 		log.Println("Can't commit reaction stats transaction")
 		log.Println(err)
@@ -423,6 +553,16 @@ func handleReactionCountToStats(ctx context.Context, update *models.MessageReact
 		log.Println(err)
 		return
 	}
+
+	receiverID, receiverName, hasReceiver, err := getMessageAuthorState(tx, chatID, messageID)
+	if err != nil {
+		_ = tx.Rollback()
+		log.Println("Can't read message author state for reaction count update")
+		log.Println(err)
+		return
+	}
+
+	addedTotal := 0
 
 	for _, reactionCount := range update.Reactions {
 		key, label := reactionKeyAndLabel(reactionCount.Type)
@@ -459,6 +599,7 @@ func handleReactionCountToStats(ctx context.Context, update *models.MessageReact
 		if delta <= 0 {
 			continue
 		}
+		addedTotal += int(delta)
 
 		if _, err = tx.Exec(`
 			INSERT INTO reaction_popular_total(chat_id, reaction_key, reaction_label, reactions_total, updated_at)
@@ -489,6 +630,15 @@ func handleReactionCountToStats(ctx context.Context, update *models.MessageReact
 		}
 	}
 
+	if hasReceiver {
+		if err = upsertReactionReceived(tx, chatID, receiverID, receiverName, dayDate, addedTotal, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save received reactions stats from count update")
+			log.Println(err)
+			return
+		}
+	}
+
 	if err = tx.Commit(); err != nil {
 		log.Println("Can't commit reaction count stats transaction")
 		log.Println(err)
@@ -511,21 +661,20 @@ func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	wordsCount := len(strings.Fields(update.Message.Text))
-	if wordsCount == 0 {
-		return
-	}
-
 	if statsDB == nil {
 		log.Println("stats database is not initialized")
 		return
 	}
 
-	chatId := update.Message.Chat.ID
-	userId := update.Message.From.ID
-	username := getUserName(update.Message.From)
+	chatID := update.Message.Chat.ID
+	authorID, authorName, hasAuthor := getMessageAuthor(update.Message)
+	if !hasAuthor {
+		return
+	}
+
 	msgDate := update.Message.Date
 	dayDate := time.Unix(int64(msgDate), 0).In(time.Local).Format(dayLayout)
+	wordsCount := len(strings.Fields(update.Message.Text))
 
 	tx, err := statsDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -534,32 +683,41 @@ func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	if _, err = tx.Exec(`
-		INSERT INTO stats_total(chat_id, user_id, username, words_total, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(chat_id, user_id) DO UPDATE SET
-			username = excluded.username,
-			words_total = stats_total.words_total + excluded.words_total,
-			updated_at = excluded.updated_at
-	`, chatId, userId, username, wordsCount, msgDate); err != nil {
+	if err = upsertMessageAuthorState(tx, chatID, update.Message.ID, authorID, authorName, msgDate); err != nil {
 		_ = tx.Rollback()
-		log.Println("Can't save total stats")
+		log.Println("Can't save message author state")
 		log.Println(err)
 		return
 	}
 
-	if _, err = tx.Exec(`
-		INSERT INTO stats_daily(chat_id, user_id, day_date, username, words_count, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(chat_id, user_id, day_date) DO UPDATE SET
-			username = excluded.username,
-			words_count = stats_daily.words_count + excluded.words_count,
-			updated_at = excluded.updated_at
-	`, chatId, userId, dayDate, username, wordsCount, msgDate); err != nil {
-		_ = tx.Rollback()
-		log.Println("Can't save daily stats")
-		log.Println(err)
-		return
+	if wordsCount > 0 {
+		if _, err = tx.Exec(`
+			INSERT INTO stats_total(chat_id, user_id, username, words_total, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, user_id) DO UPDATE SET
+				username = excluded.username,
+				words_total = stats_total.words_total + excluded.words_total,
+				updated_at = excluded.updated_at
+		`, chatID, authorID, authorName, wordsCount, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save total stats")
+			log.Println(err)
+			return
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO stats_daily(chat_id, user_id, day_date, username, words_count, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, user_id, day_date) DO UPDATE SET
+				username = excluded.username,
+				words_count = stats_daily.words_count + excluded.words_count,
+				updated_at = excluded.updated_at
+		`, chatID, authorID, dayDate, authorName, wordsCount, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save daily stats")
+			log.Println(err)
+			return
+		}
 	}
 
 	if err = tx.Commit(); err != nil {
@@ -701,10 +859,26 @@ func handleReactionDayTop(ctx context.Context, b *bot.Bot, update *models.Update
 		log.Println(err)
 		return
 	}
+	receivedStats, err := loadReactionStats("SELECT username, reactions_count FROM reaction_received_daily WHERE chat_id = ? AND day_date = ? ORDER BY reactions_count DESC LIMIT 10", chatID, today)
+	if err != nil {
+		log.Println("Can't get day top by received reactions")
+		log.Println(err)
+		return
+	}
 
 	msg := "Реакции за день:\n\nТоп кто ставил:\n"
 	place := 1
 	for _, item := range userStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nТоп кому ставили:\n"
+	place = 1
+	for _, item := range receivedStats {
 		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
 		place++
 	}
@@ -747,10 +921,26 @@ func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 		log.Println(err)
 		return
 	}
+	receivedStats, err := loadReactionStats("SELECT username, reactions_total FROM reaction_received_total WHERE chat_id = ? ORDER BY reactions_total DESC LIMIT 10", chatID)
+	if err != nil {
+		log.Println("Can't get all-time top by received reactions")
+		log.Println(err)
+		return
+	}
 
 	msg := "Реакции за всё время:\n\nТоп кто ставил:\n"
 	place := 1
 	for _, item := range userStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nТоп кому ставили:\n"
+	place = 1
+	for _, item := range receivedStats {
 		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
 		place++
 	}
@@ -800,5 +990,37 @@ func handleMyReaction(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	name := getUserName(update.Message.From)
 	msg := fmt.Sprintf("%s, твои реакции:\nСегодня добавлено: %d\nЗа всё время добавлено: %d", name, todayCount, totalCount)
+	sendText(ctx, b, update, msg)
+}
+
+func handleMyReceivedReaction(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle my received reaction")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+	today := time.Now().In(time.Local).Format(dayLayout)
+
+	var todayCount int64
+	err := statsDB.QueryRow("SELECT COALESCE(reactions_count, 0) FROM reaction_received_daily WHERE chat_id = ? AND user_id = ? AND day_date = ?", chatID, userID, today).Scan(&todayCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("Can't get daily received reaction stat")
+		log.Println(err)
+		return
+	}
+
+	var totalCount int64
+	err = statsDB.QueryRow("SELECT COALESCE(reactions_total, 0) FROM reaction_received_total WHERE chat_id = ? AND user_id = ?", chatID, userID).Scan(&totalCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("Can't get total received reaction stat")
+		log.Println(err)
+		return
+	}
+
+	name := getUserName(update.Message.From)
+	msg := fmt.Sprintf("%s, твои полученные реакции:\nСегодня получено: %d\nЗа всё время получено: %d", name, todayCount, totalCount)
 	sendText(ctx, b, update, msg)
 }
