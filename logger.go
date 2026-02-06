@@ -73,6 +73,11 @@ func handleAllMessages(ctx context.Context, b *bot.Bot, update *models.Update) {
 		handleReactionToStats(ctx, update.MessageReaction)
 		return
 	}
+	if update.MessageReactionCount != nil {
+		log.Println("Handle reaction count update to stats")
+		handleReactionCountToStats(ctx, update.MessageReactionCount)
+		return
+	}
 
 	if update.Message == nil {
 		return

@@ -67,3 +67,13 @@ CREATE INDEX IF NOT EXISTS idx_reaction_given_daily_chat_day ON reaction_given_d
 CREATE INDEX IF NOT EXISTS idx_reaction_given_total_chat ON reaction_given_total(chat_id);
 CREATE INDEX IF NOT EXISTS idx_reaction_popular_daily_chat_day ON reaction_popular_daily(chat_id, day_date);
 CREATE INDEX IF NOT EXISTS idx_reaction_popular_total_chat ON reaction_popular_total(chat_id);
+
+CREATE TABLE IF NOT EXISTS reaction_message_state (
+    chat_id INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    reaction_key TEXT NOT NULL,
+    reaction_label TEXT NOT NULL,
+    last_total_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, message_id, reaction_key)
+);

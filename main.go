@@ -1,67 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
-	"time"
 
 	"github.com/go-telegram/bot"
 )
-
-type telegramAPIResponse struct {
-	OK          bool   `json:"ok"`
-	Description string `json:"description"`
-}
-
-func configureAllowedUpdates(token string) error {
-	payload := map[string]any{
-		"offset":  -1,
-		"limit":   1,
-		"timeout": 0,
-		"allowed_updates": []string{
-			"message",
-			"edited_message",
-			"callback_query",
-			"message_reaction",
-			"message_reaction_count",
-		},
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("can't marshal allowed updates payload: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("https://api.telegram.org/bot%s/getUpdates", token), bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("can't create getUpdates request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("can't send getUpdates request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result telegramAPIResponse
-	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("can't decode getUpdates response: %w", err)
-	}
-
-	if !result.OK {
-		return fmt.Errorf("telegram getUpdates returned not ok: %s", result.Description)
-	}
-
-	return nil
-}
 
 func main() {
 	log.Println("Start application")
@@ -73,11 +19,6 @@ func main() {
 	}
 
 	token := os.Getenv("TELEGRAM_API_TOKEN")
-
-	if err := configureAllowedUpdates(token); err != nil {
-		log.Println("Warning: can't configure allowed updates for reactions")
-		log.Println(err)
-	}
 
 	debug := os.Getenv("DEBUG")
 	if len(debug) != 0 {
@@ -113,5 +54,5 @@ func main() {
 	goBotter.RegisterHandler(bot.HandlerTypeMessageText, "!мояреак", bot.MatchTypeExact, handleMyReaction)
 
 	log.Println("Start bot")
-	goBotter.Start(ctx)
+	startPolling(ctx, goBotter, token)
 }

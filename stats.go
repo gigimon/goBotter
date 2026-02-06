@@ -146,6 +146,16 @@ func initStatsStorage() error {
 		CREATE INDEX IF NOT EXISTS idx_reaction_given_total_chat ON reaction_given_total(chat_id);
 		CREATE INDEX IF NOT EXISTS idx_reaction_popular_daily_chat_day ON reaction_popular_daily(chat_id, day_date);
 		CREATE INDEX IF NOT EXISTS idx_reaction_popular_total_chat ON reaction_popular_total(chat_id);
+
+		CREATE TABLE IF NOT EXISTS reaction_message_state (
+			chat_id INTEGER NOT NULL,
+			message_id INTEGER NOT NULL,
+			reaction_key TEXT NOT NULL,
+			reaction_label TEXT NOT NULL,
+			last_total_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, message_id, reaction_key)
+		);
 	`); err != nil {
 		db.Close()
 		return fmt.Errorf("can't create stat tables: %w", err)
@@ -385,6 +395,102 @@ func handleReactionToStats(ctx context.Context, update *models.MessageReactionUp
 
 	if err = tx.Commit(); err != nil {
 		log.Println("Can't commit reaction stats transaction")
+		log.Println(err)
+	}
+}
+
+func handleReactionCountToStats(ctx context.Context, update *models.MessageReactionCountUpdated) {
+	log.Println("Handle reaction count to stats")
+	if update == nil {
+		return
+	}
+	if update.Chat.Type == "private" {
+		return
+	}
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Chat.ID
+	messageID := update.MessageID
+	msgDate := update.Date
+	dayDate := time.Unix(int64(msgDate), 0).In(time.Local).Format(dayLayout)
+
+	tx, err := statsDB.BeginTx(ctx, nil)
+	if err != nil {
+		log.Println("Can't start reaction count stats transaction")
+		log.Println(err)
+		return
+	}
+
+	for _, reactionCount := range update.Reactions {
+		key, label := reactionKeyAndLabel(reactionCount.Type)
+		if key == "" {
+			continue
+		}
+
+		var prevCount int64
+		queryErr := tx.QueryRow("SELECT last_total_count FROM reaction_message_state WHERE chat_id = ? AND message_id = ? AND reaction_key = ?", chatID, messageID, key).Scan(&prevCount)
+		if queryErr != nil && queryErr != sql.ErrNoRows {
+			_ = tx.Rollback()
+			log.Println("Can't read reaction message state")
+			log.Println(queryErr)
+			return
+		}
+
+		newCount := int64(reactionCount.TotalCount)
+		delta := newCount - prevCount
+
+		if _, err = tx.Exec(`
+			INSERT INTO reaction_message_state(chat_id, message_id, reaction_key, reaction_label, last_total_count, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, message_id, reaction_key) DO UPDATE SET
+				reaction_label = excluded.reaction_label,
+				last_total_count = excluded.last_total_count,
+				updated_at = excluded.updated_at
+		`, chatID, messageID, key, label, newCount, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't upsert reaction message state")
+			log.Println(err)
+			return
+		}
+
+		if delta <= 0 {
+			continue
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO reaction_popular_total(chat_id, reaction_key, reaction_label, reactions_total, updated_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, reaction_key) DO UPDATE SET
+				reaction_label = excluded.reaction_label,
+				reactions_total = reaction_popular_total.reactions_total + excluded.reactions_total,
+				updated_at = excluded.updated_at
+		`, chatID, key, label, delta, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save total popular reaction stats from count update")
+			log.Println(err)
+			return
+		}
+
+		if _, err = tx.Exec(`
+			INSERT INTO reaction_popular_daily(chat_id, day_date, reaction_key, reaction_label, reactions_count, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(chat_id, day_date, reaction_key) DO UPDATE SET
+				reaction_label = excluded.reaction_label,
+				reactions_count = reaction_popular_daily.reactions_count + excluded.reactions_count,
+				updated_at = excluded.updated_at
+		`, chatID, dayDate, key, label, delta, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save daily popular reaction stats from count update")
+			log.Println(err)
+			return
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		log.Println("Can't commit reaction count stats transaction")
 		log.Println(err)
 	}
 }
