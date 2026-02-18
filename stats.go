@@ -104,6 +104,49 @@ func initStatsStorage() error {
 		CREATE INDEX IF NOT EXISTS idx_stats_daily_chat_day ON stats_daily(chat_id, day_date);
 		CREATE INDEX IF NOT EXISTS idx_stats_total_chat ON stats_total(chat_id);
 
+		CREATE TABLE IF NOT EXISTS forward_given_total (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			username TEXT NOT NULL,
+			forward_total INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS forward_given_daily (
+			chat_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			day_date TEXT NOT NULL,
+			username TEXT NOT NULL,
+			forward_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, user_id, day_date)
+		);
+
+		CREATE TABLE IF NOT EXISTS forward_target_total (
+			chat_id INTEGER NOT NULL,
+			target_key TEXT NOT NULL,
+			target_label TEXT NOT NULL,
+			forward_total INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, target_key)
+		);
+
+		CREATE TABLE IF NOT EXISTS forward_target_daily (
+			chat_id INTEGER NOT NULL,
+			day_date TEXT NOT NULL,
+			target_key TEXT NOT NULL,
+			target_label TEXT NOT NULL,
+			forward_count INTEGER NOT NULL DEFAULT 0,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(chat_id, day_date, target_key)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_forward_given_daily_chat_day ON forward_given_daily(chat_id, day_date);
+		CREATE INDEX IF NOT EXISTS idx_forward_given_total_chat ON forward_given_total(chat_id);
+		CREATE INDEX IF NOT EXISTS idx_forward_target_daily_chat_day ON forward_target_daily(chat_id, day_date);
+		CREATE INDEX IF NOT EXISTS idx_forward_target_total_chat ON forward_target_total(chat_id);
+
 		CREATE TABLE IF NOT EXISTS reaction_given_total (
 			chat_id INTEGER NOT NULL,
 			user_id INTEGER NOT NULL,
@@ -361,6 +404,41 @@ func getMessageAuthor(msg *models.Message) (int64, string, bool) {
 	return 0, "", false
 }
 
+func getForwardTarget(origin *models.MessageOrigin) (string, string, bool) {
+	if origin == nil {
+		return "", "", false
+	}
+
+	switch origin.Type {
+	case models.MessageOriginTypeUser:
+		if origin.MessageOriginUser == nil {
+			return "", "", false
+		}
+		user := origin.MessageOriginUser.SenderUser
+		return fmt.Sprintf("user:%d", user.ID), getUserName(&user), true
+	case models.MessageOriginTypeHiddenUser:
+		if origin.MessageOriginHiddenUser == nil || strings.TrimSpace(origin.MessageOriginHiddenUser.SenderUserName) == "" {
+			return "", "", false
+		}
+		name := strings.TrimSpace(origin.MessageOriginHiddenUser.SenderUserName)
+		return "hidden_user:" + name, name, true
+	case models.MessageOriginTypeChat:
+		if origin.MessageOriginChat == nil {
+			return "", "", false
+		}
+		chat := origin.MessageOriginChat.SenderChat
+		return fmt.Sprintf("chat:%d", chat.ID), getChatName(&chat), true
+	case models.MessageOriginTypeChannel:
+		if origin.MessageOriginChannel == nil {
+			return "", "", false
+		}
+		chat := origin.MessageOriginChannel.Chat
+		return fmt.Sprintf("channel:%d", chat.ID), getChatName(&chat), true
+	default:
+		return "", "", false
+	}
+}
+
 func upsertMessageAuthorState(tx *sql.Tx, chatID int64, messageID int, authorID int64, authorName string, updatedAt int) error {
 	_, err := tx.Exec(`
 		INSERT INTO message_author_state(chat_id, message_id, author_user_id, author_name, updated_at)
@@ -437,6 +515,62 @@ func upsertReactionReceivedByType(tx *sql.Tx, chatID int64, receiverID int64, da
 			reactions_count = reaction_received_type_daily.reactions_count + excluded.reactions_count,
 			updated_at = excluded.updated_at
 	`, chatID, receiverID, dayDate, reactionKey, reactionLabel, delta, updatedAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func upsertForwardGiven(tx *sql.Tx, chatID int64, userID int64, username string, dayDate string, delta int, updatedAt int) error {
+	if delta <= 0 {
+		return nil
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO forward_given_total(chat_id, user_id, username, forward_total, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id) DO UPDATE SET
+			username = excluded.username,
+			forward_total = forward_given_total.forward_total + excluded.forward_total,
+			updated_at = excluded.updated_at
+	`, chatID, userID, username, delta, updatedAt); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO forward_given_daily(chat_id, user_id, day_date, username, forward_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, user_id, day_date) DO UPDATE SET
+			username = excluded.username,
+			forward_count = forward_given_daily.forward_count + excluded.forward_count,
+			updated_at = excluded.updated_at
+	`, chatID, userID, dayDate, username, delta, updatedAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func upsertForwardTarget(tx *sql.Tx, chatID int64, targetKey string, targetLabel string, dayDate string, delta int, updatedAt int) error {
+	if delta <= 0 || targetKey == "" {
+		return nil
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO forward_target_total(chat_id, target_key, target_label, forward_total, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, target_key) DO UPDATE SET
+			target_label = excluded.target_label,
+			forward_total = forward_target_total.forward_total + excluded.forward_total,
+			updated_at = excluded.updated_at
+	`, chatID, targetKey, targetLabel, delta, updatedAt); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO forward_target_daily(chat_id, day_date, target_key, target_label, forward_count, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(chat_id, day_date, target_key) DO UPDATE SET
+			target_label = excluded.target_label,
+			forward_count = forward_target_daily.forward_count + excluded.forward_count,
+			updated_at = excluded.updated_at
+	`, chatID, dayDate, targetKey, targetLabel, delta, updatedAt); err != nil {
 		return err
 	}
 	return nil
@@ -760,6 +894,25 @@ func handleMsgToStats(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
+	if update.Message.ForwardOrigin != nil {
+		if err = upsertForwardGiven(tx, chatID, authorID, authorName, dayDate, 1, msgDate); err != nil {
+			_ = tx.Rollback()
+			log.Println("Can't save forward given stats")
+			log.Println(err)
+			return
+		}
+
+		targetKey, targetLabel, hasTarget := getForwardTarget(update.Message.ForwardOrigin)
+		if hasTarget {
+			if err = upsertForwardTarget(tx, chatID, targetKey, targetLabel, dayDate, 1, msgDate); err != nil {
+				_ = tx.Rollback()
+				log.Println("Can't save forward target stats")
+				log.Println(err)
+				return
+			}
+		}
+	}
+
 	if wordsCount > 0 {
 		if _, err = tx.Exec(`
 			INSERT INTO stats_total(chat_id, user_id, username, words_total, updated_at)
@@ -1028,6 +1181,131 @@ func handleReactionTop(ctx context.Context, b *bot.Bot, update *models.Update) {
 		msg += "Пока нет данных"
 	}
 
+	sendText(ctx, b, update, msg)
+}
+
+func handleForwardDayTop(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle forward day top")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	today := time.Now().In(time.Local).Format(dayLayout)
+
+	userStats, err := loadReactionStats("SELECT username, forward_count FROM forward_given_daily WHERE chat_id = ? AND day_date = ? ORDER BY forward_count DESC LIMIT 10", chatID, today)
+	if err != nil {
+		log.Println("Can't get day top by forward users")
+		log.Println(err)
+		return
+	}
+
+	targetStats, err := loadReactionStats("SELECT target_label, forward_count FROM forward_target_daily WHERE chat_id = ? AND day_date = ? ORDER BY forward_count DESC LIMIT 10", chatID, today)
+	if err != nil {
+		log.Println("Can't get day top by forward targets")
+		log.Println(err)
+		return
+	}
+
+	msg := "Форварды за день:\n\nТоп кто форвардил:\n"
+	place := 1
+	for _, item := range userStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nТоп кого/что форвардили:\n"
+	place = 1
+	for _, item := range targetStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных"
+	}
+
+	sendText(ctx, b, update, msg)
+}
+
+func handleForwardTop(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle forward top")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+
+	userStats, err := loadReactionStats("SELECT username, forward_total FROM forward_given_total WHERE chat_id = ? ORDER BY forward_total DESC LIMIT 10", chatID)
+	if err != nil {
+		log.Println("Can't get all-time top by forward users")
+		log.Println(err)
+		return
+	}
+
+	targetStats, err := loadReactionStats("SELECT target_label, forward_total FROM forward_target_total WHERE chat_id = ? ORDER BY forward_total DESC LIMIT 10", chatID)
+	if err != nil {
+		log.Println("Can't get all-time top by forward targets")
+		log.Println(err)
+		return
+	}
+
+	msg := "Форварды за всё время:\n\nТоп кто форвардил:\n"
+	place := 1
+	for _, item := range userStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных\n"
+	}
+
+	msg += "\nТоп кого/что форвардили:\n"
+	place = 1
+	for _, item := range targetStats {
+		msg += fmt.Sprintf("%d. %s: %d\n", place, item.name, item.count)
+		place++
+	}
+	if place == 1 {
+		msg += "Пока нет данных"
+	}
+
+	sendText(ctx, b, update, msg)
+}
+
+func handleMyForward(ctx context.Context, b *bot.Bot, update *models.Update) {
+	log.Println("Handle my forward")
+	if statsDB == nil {
+		log.Println("stats database is not initialized")
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+	today := time.Now().In(time.Local).Format(dayLayout)
+
+	var todayCount int64
+	err := statsDB.QueryRow("SELECT COALESCE(forward_count, 0) FROM forward_given_daily WHERE chat_id = ? AND user_id = ? AND day_date = ?", chatID, userID, today).Scan(&todayCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("Can't get daily forward stat")
+		log.Println(err)
+		return
+	}
+
+	var totalCount int64
+	err = statsDB.QueryRow("SELECT COALESCE(forward_total, 0) FROM forward_given_total WHERE chat_id = ? AND user_id = ?", chatID, userID).Scan(&totalCount)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("Can't get total forward stat")
+		log.Println(err)
+		return
+	}
+
+	name := getUserName(update.Message.From)
+	msg := fmt.Sprintf("%s, твои форварды:\nСегодня: %d\nЗа всё время: %d", name, todayCount, totalCount)
 	sendText(ctx, b, update, msg)
 }
 

@@ -25,6 +25,49 @@ CREATE TABLE IF NOT EXISTS stats_daily (
 CREATE INDEX IF NOT EXISTS idx_stats_daily_chat_day ON stats_daily(chat_id, day_date);
 CREATE INDEX IF NOT EXISTS idx_stats_total_chat ON stats_total(chat_id);
 
+CREATE TABLE IF NOT EXISTS forward_given_total (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    forward_total INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS forward_given_daily (
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    day_date TEXT NOT NULL,
+    username TEXT NOT NULL,
+    forward_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, user_id, day_date)
+);
+
+CREATE TABLE IF NOT EXISTS forward_target_total (
+    chat_id INTEGER NOT NULL,
+    target_key TEXT NOT NULL,
+    target_label TEXT NOT NULL,
+    forward_total INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, target_key)
+);
+
+CREATE TABLE IF NOT EXISTS forward_target_daily (
+    chat_id INTEGER NOT NULL,
+    day_date TEXT NOT NULL,
+    target_key TEXT NOT NULL,
+    target_label TEXT NOT NULL,
+    forward_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(chat_id, day_date, target_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_forward_given_daily_chat_day ON forward_given_daily(chat_id, day_date);
+CREATE INDEX IF NOT EXISTS idx_forward_given_total_chat ON forward_given_total(chat_id);
+CREATE INDEX IF NOT EXISTS idx_forward_target_daily_chat_day ON forward_target_daily(chat_id, day_date);
+CREATE INDEX IF NOT EXISTS idx_forward_target_total_chat ON forward_target_total(chat_id);
+
 CREATE TABLE IF NOT EXISTS reaction_given_total (
     chat_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
